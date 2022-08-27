@@ -134,6 +134,7 @@ static int litesata_do_bvec(struct litesata_dev *lbd, struct bio_vec *bv,
 	void __iomem *regs;
 	int err;
 	enum dma_data_direction dir;
+	unsigned int count;
 
 	if (op_is_write(op)) {
 		dir = DMA_TO_DEVICE;
@@ -148,8 +149,13 @@ static int litesata_do_bvec(struct litesata_dev *lbd, struct bio_vec *bv,
 	if (err)
 		return err;
 
-	err = litesata_do_dma(lbd, regs,
-			      dma, sector, (bv->bv_len >> SECTOR_SHIFT));
+	count = bv->bv_len >> SECTOR_SHIFT;
+	// FIXME: I want to know if we ever transfer a number of
+	// contiguous blocks other than 1 or 8 !!!
+	if (count != 1 && count != 8)
+		dev_warn(dev, "### === --- %s %d sectors --- === ###\n",
+			 op_is_write(op) ? "writing" : "reading", count);
+	err = litesata_do_dma(lbd, regs, dma, sector, count);
 	if (err)
 		return err;
 
