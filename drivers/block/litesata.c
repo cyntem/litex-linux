@@ -370,12 +370,16 @@ static int litesata_probe(struct platform_device *pdev)
 		return err;
 	}
 
+	
+	dev_info(dev, "sata irq init \n");
+	
 	gendisk = blk_alloc_disk(NUMA_NO_NODE);
 	if (!gendisk)
 	{
 		dev_info(dev, "Error blk_alloc_disk");
 		return -ENOMEM;
 	}
+	dev_info(dev, "blk_alloc_disk \n");
 
 	err = devm_add_action_or_reset(dev, litesata_devm_put_disk, gendisk);
 	if (err)
@@ -385,15 +389,21 @@ static int litesata_probe(struct platform_device *pdev)
 				     "Can't register put_disk action\n");
 	}
 
+	dev_info(dev, "devm_add_action_or_reset \n");
 	gendisk->private_data = lbd;
 	gendisk->fops = &litesata_fops;
 	strcpy(gendisk->disk_name, "litesata");
+	
 	set_capacity(gendisk, size);
+	dev_info(dev, "set_capacity \n");
 	blk_queue_flag_set(QUEUE_FLAG_NONROT, gendisk->queue);
 	blk_queue_physical_block_size(gendisk->queue, SECTOR_SIZE);
+	dev_info(dev, "blk_queue_physical_block_size \n");
 	blk_queue_logical_block_size(gendisk->queue, SECTOR_SIZE);
+	dev_info(dev, "blk_queue_logical_block_size \n");
 
 	err = add_disk(gendisk);
+	dev_info(dev, "add_disk \n");
 	if (err)
 	{
 		dev_info(dev, "Error add_disk");
