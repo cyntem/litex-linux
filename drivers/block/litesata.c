@@ -354,21 +354,33 @@ static int litesata_probe(struct platform_device *pdev)
 	/* Initialize disk, get model and size */
 	err = litesata_init_ident(lbd, &size);
 	if (err)
+	{
+		dev_info(dev, "Error litesata_init_ident");
 		return err;
+	}
 
 	/* Configure interrupts */
 	err = litesata_irq_init(pdev, lbd);
 	if (err)
+	{
+		dev_info(dev, "Error litesata_irq_init");
 		return err;
+	}
 
 	gendisk = blk_alloc_disk(NUMA_NO_NODE);
 	if (!gendisk)
+	{
+		dev_info(dev, "Error blk_alloc_disk");
 		return -ENOMEM;
+	}
 
 	err = devm_add_action_or_reset(dev, litesata_devm_put_disk, gendisk);
 	if (err)
+	{
+		dev_info(dev, "Error devm_add_action_or_reset");
 		return dev_err_probe(dev, err,
 				     "Can't register put_disk action\n");
+	}
 
 	gendisk->private_data = lbd;
 	gendisk->fops = &litesata_fops;
@@ -380,7 +392,10 @@ static int litesata_probe(struct platform_device *pdev)
 
 	err = add_disk(gendisk);
 	if (err)
+	{
+		dev_info(dev, "Error add_disk");
 		return err;
+	}
 
 	dev_info(dev, "probe success; sector size = %d\n", SECTOR_SIZE);
 	return 0;
