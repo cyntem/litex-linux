@@ -227,7 +227,10 @@ static int litesata_irq_init(struct platform_device *pdev,
 
 	ret = platform_get_irq_optional(pdev, 0);
 	if (ret < 0 && ret != -ENXIO)
+	{
+		dev_info(dev, "%d<0  or ret != -ENXIO\n", ret);
 		return ret;
+	}
 	if (ret > 0)
 		lbd->irq = ret;
 	else {
