@@ -394,6 +394,16 @@ static int litesata_probe(struct platform_device *pdev)
 	gendisk->fops = &litesata_fops;
 	strcpy(gendisk->disk_name, "litesata");
 	
+	set_capacity(gendisk, 0);
+	
+	err = add_disk(gendisk);
+	dev_info(dev, "add_disk \n");
+	if (err)
+	{
+		dev_info(dev, "Error add_disk");
+		return err;
+	}
+	
 	set_capacity(gendisk, size);
 	dev_info(dev, "set_capacity \n");
 	blk_queue_flag_set(QUEUE_FLAG_NONROT, gendisk->queue);
@@ -402,13 +412,6 @@ static int litesata_probe(struct platform_device *pdev)
 	blk_queue_logical_block_size(gendisk->queue, SECTOR_SIZE);
 	dev_info(dev, "blk_queue_logical_block_size \n");
 
-	err = add_disk(gendisk);
-	dev_info(dev, "add_disk \n");
-	if (err)
-	{
-		dev_info(dev, "Error add_disk");
-		return err;
-	}
 
 	dev_info(dev, "probe success; sector size = %d\n", SECTOR_SIZE);
 	return 0;
