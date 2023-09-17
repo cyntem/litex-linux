@@ -157,7 +157,10 @@ static int litesata_do_bvec(struct litesata_dev *lbd, struct bio_vec *bv,
 			 op_is_write(op) ? "writing" : "reading", count);
 	err = litesata_do_dma(lbd, regs, dma, sector, count);
 	if (err)
+	{
+		dev_warn(dev, "litesata_do_dma error");
 		return err;
+	}
 
 	dma_unmap_page(dev, dma, bv->bv_len, dir);
 	return 0;
