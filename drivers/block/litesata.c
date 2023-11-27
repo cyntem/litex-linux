@@ -38,6 +38,7 @@ Example DTS node (adjust with your own addresses from csr.csv):
 #include <linux/litex.h>
 #include <linux/mod_devicetable.h>
 #include <linux/module.h>
+#include <linux/mutex.h>
 #include <linux/platform_device.h>
 
 #define LITESATA_ID_STRT   0x00 // 1bit, w
@@ -56,10 +57,11 @@ Example DTS node (adjust with your own addresses from csr.csv):
 #define LSPHY_STS_CTL BIT(3)
 
 #define LITESATA_DMA_SECT  0x00 // 48bit, w
-#define LITESATA_DMA_ADDR  0x08 // 64bit, w
-#define LITESATA_DMA_STRT  0x10 // 1bit, w
-#define LITESATA_DMA_DONE  0x14 // 1bit, ro
-#define LITESATA_DMA_ERR   0x18 // 1bit, ro
+#define LITESATA_DMA_NSEC  0x08 // 16bit, w
+#define LITESATA_DMA_ADDR  0x0c // 64bit, w
+#define LITESATA_DMA_STRT  0x14 // 1bit, w
+#define LITESATA_DMA_DONE  0x18 // 1bit, ro
+#define LITESATA_DMA_ERR   0x1c // 1bit, ro
 
 #define LITESATA_IRQ_STS   0x00 // 2bit, ro
 #define LITESATA_IRQ_PEND  0x04 // 2bit, rw
@@ -71,6 +73,8 @@ Example DTS node (adjust with your own addresses from csr.csv):
 struct litesata_dev {
 	struct device *dev;
 
+	struct mutex lock;
+
 	void __iomem *lsident;
 	void __iomem *lsphy;
 	void __iomem *lsreader;
@@ -81,8 +85,9 @@ struct litesata_dev {
 	int irq;
 };
 
-static int litesata_do_dma_sector(struct litesata_dev *lbd, void __iomem *regs,
-				  sector_t sector, dma_addr_t dma)
+/* caller must hold lbd->lock to prevent interleaving transfers */
+static int litesata_do_dma(struct litesata_dev *lbd, void __iomem *regs,
+			   dma_addr_t dma, sector_t sector, unsigned int count)
 {
 	int irq = lbd->irq;
 
@@ -91,13 +96,15 @@ static int litesata_do_dma_sector(struct litesata_dev *lbd, void __iomem *regs,
 
 	/* NOTE: do *not* start by writing 0 to LITESATA_DMA_STRT!!! */
 	litex_write64(regs + LITESATA_DMA_SECT, sector);
+	litex_write16(regs + LITESATA_DMA_NSEC, count);
 	litex_write64(regs + LITESATA_DMA_ADDR, dma);
 	litex_write8(regs + LITESATA_DMA_STRT, 1);
 
 	if (irq)
 		wait_for_completion(&lbd->dma_done);
 
-	/* wait for DMA xfer completion */
+	// FIXME: should we implement a timeout here?
+	// (or some other way to improve polling mode)?
 	while ((litex_read8(regs + LITESATA_DMA_DONE) & 0x01) == 0);
 
 	/* check if DMA xfer successful */
@@ -106,23 +113,6 @@ static int litesata_do_dma_sector(struct litesata_dev *lbd, void __iomem *regs,
 
 	dev_err(lbd->dev, "failed transfering sector %Ld\n", sector);
 	return -EIO;
-}
-
-static int litesata_do_dma(struct litesata_dev *lbd, void __iomem *regs,
-			   dma_addr_t dma, sector_t sector, unsigned int count)
-{
-	int err;
-
-	while (count--) {
-		err = litesata_do_dma_sector(lbd, regs, sector, dma);
-		if (err)
-			return err;
-
-		sector++;
-		dma += SECTOR_SIZE;
-	}
-
-	return 0;
 }
 
 /* Process a single bvec of a bio. */
@@ -150,17 +140,11 @@ static int litesata_do_bvec(struct litesata_dev *lbd, struct bio_vec *bv,
 		return err;
 
 	count = bv->bv_len >> SECTOR_SHIFT;
-	// FIXME: I want to know if we ever transfer a number of
-	// contiguous blocks other than 1 or 8 !!!
-	if (count != 1 && count != 8)
-		dev_warn(dev, "### === --- %s %d sectors --- === ###\n",
-			 op_is_write(op) ? "writing" : "reading", count);
+	mutex_lock(&lbd->lock);
 	err = litesata_do_dma(lbd, regs, dma, sector, count);
+	mutex_unlock(&lbd->lock);
 	if (err)
-	{
-		dev_warn(dev, "litesata_do_dma error");
 		return err;
-	}
 
 	dma_unmap_page(dev, dma, bv->bv_len, dir);
 	return 0;
@@ -230,10 +214,7 @@ static int litesata_irq_init(struct platform_device *pdev,
 
 	ret = platform_get_irq_optional(pdev, 0);
 	if (ret < 0 && ret != -ENXIO)
-	{
-		dev_info(dev, "%d<0  or ret != -ENXIO\n", ret);
 		return ret;
-	}
 	if (ret > 0)
 		lbd->irq = ret;
 	else {
@@ -341,6 +322,8 @@ static int litesata_probe(struct platform_device *pdev)
 
 	lbd->dev = dev;
 
+	mutex_init(&lbd->lock);
+
 	lbd->lsident = devm_platform_ioremap_resource_byname(pdev, "ident");
 	if (IS_ERR(lbd->lsident))
 		return PTR_ERR(lbd->lsident);
@@ -360,61 +343,33 @@ static int litesata_probe(struct platform_device *pdev)
 	/* Initialize disk, get model and size */
 	err = litesata_init_ident(lbd, &size);
 	if (err)
-	{
-		dev_info(dev, "Error litesata_init_ident");
 		return err;
-	}
 
 	/* Configure interrupts */
 	err = litesata_irq_init(pdev, lbd);
 	if (err)
-	{
-		dev_info(dev, "Error litesata_irq_init");
 		return err;
-	}
 
-	
-	dev_info(dev, "sata irq init \n");
-	
 	gendisk = blk_alloc_disk(NUMA_NO_NODE);
 	if (!gendisk)
-	{
-		dev_info(dev, "Error blk_alloc_disk");
 		return -ENOMEM;
-	}
-	dev_info(dev, "blk_alloc_disk \n");
 
 	err = devm_add_action_or_reset(dev, litesata_devm_put_disk, gendisk);
 	if (err)
-	{
-		dev_info(dev, "Error devm_add_action_or_reset");
 		return dev_err_probe(dev, err,
 				     "Can't register put_disk action\n");
-	}
 
-	dev_info(dev, "devm_add_action_or_reset \n");
 	gendisk->private_data = lbd;
 	gendisk->fops = &litesata_fops;
 	strcpy(gendisk->disk_name, "litesata");
-	
-	set_capacity(gendisk, 0);
-	
-	err = add_disk(gendisk);
-	dev_info(dev, "add_disk \n");
-	if (err)
-	{
-		dev_info(dev, "Error add_disk");
-		return err;
-	}
-	
 	set_capacity(gendisk, size);
-	dev_info(dev, "set_capacity \n");
 	blk_queue_flag_set(QUEUE_FLAG_NONROT, gendisk->queue);
 	blk_queue_physical_block_size(gendisk->queue, SECTOR_SIZE);
-	dev_info(dev, "blk_queue_physical_block_size \n");
 	blk_queue_logical_block_size(gendisk->queue, SECTOR_SIZE);
-	dev_info(dev, "blk_queue_logical_block_size \n");
 
+	err = add_disk(gendisk);
+	if (err)
+		return err;
 
 	dev_info(dev, "probe success; sector size = %d\n", SECTOR_SIZE);
 	return 0;
