@@ -260,16 +260,16 @@ static int litesata_init_ident(struct litesata_dev *lbd, sector_t *size)
 
 	/* reset phy */
 	litex_write8(lbd->lsphy + LITESATA_PHY_ENA, 0);
-	msleep(1);
+	msleep(5);
 	litex_write8(lbd->lsphy + LITESATA_PHY_ENA, 1);
-	msleep(100);
+	msleep(400);
 	/* check phy status */
 	if ((litex_read8(lbd->lsphy + LITESATA_PHY_STS) & LSPHY_STS_RDY) == 0)
 		return -ENODEV;
 
 	/* initiate `identify` sequence */
 	litex_write8(lbd->lsident + LITESATA_ID_STRT, 1);
-	msleep(100);
+	msleep(400);
 	/* check `identify` status */
 	if ((litex_read8(lbd->lsident + LITESATA_ID_DONE) & 0x01) == 0)
 		return -ENODEV;
